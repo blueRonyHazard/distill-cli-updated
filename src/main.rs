@@ -33,7 +33,6 @@ struct Opt {
         short,
         long,
         value_enum,
-        default_value = "Terminal",
         ignore_case = true
     )]
     output_type: Option<OutputType>,
@@ -55,6 +54,18 @@ enum OutputType {
     Word,
     Markdown,
     Slack,
+}
+
+impl std::fmt::Display for OutputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputType::Terminal => write!(f, "terminal"),
+            OutputType::Text => write!(f, "text"),
+            OutputType::Word => write!(f, "word"),
+            OutputType::Markdown => write!(f, "markdown"),
+            OutputType::Slack => write!(f, "slack"),
+        }
+    }
 }
 
 impl OutputType {
@@ -88,14 +99,14 @@ async fn main() -> Result<()> {
 
     let Opt {
         input_audio_file,
-        mut output_type,
+        output_type,
         output_filename,
         language_code,
         delete_s3_object,
     } = Opt::parse();
 
     // Handle output type inference and validation
-    let output_type = match (&output_filename, output_type) {
+    let actual_output_type = match (&output_filename, output_type) {
         (Some(filename), None) => {
             // Try to infer from filename if type not explicitly specified
             OutputType::from_filename(filename).unwrap_or_else(|| {
@@ -104,12 +115,17 @@ async fn main() -> Result<()> {
             })
         },
         (Some(filename), Some(explicit_type)) => {
-            // If type explicitly specified, check against filename
+            match (filename, explicit_type) {
+                (_, OutputType::Terminal) => bail!("Output filename cannot be used with terminal output type"),
+                (_, OutputType::Slack) => bail!("Output filename cannot be used with Slack output type"),
+                (_, _) => {}
+            }
+        
             if let Some(inferred_type) = OutputType::from_filename(filename) {
                 if explicit_type != inferred_type {
                     println!("Warning: Output filename extension suggests {} output type, but {} was explicitly specified",
-                        inferred_type.to_string().to_lowercase(),
-                        explicit_type.to_string().to_lowercase());
+                        inferred_type,
+                        explicit_type);
                 }
             }
             explicit_type
@@ -117,14 +133,6 @@ async fn main() -> Result<()> {
         (None, Some(t)) => t,
         (None, None) => OutputType::Terminal,
     };
-
-    if let Some(_) = output_filename {
-        match output_type {
-            OutputType::Terminal => bail!("Output filename cannot be used with terminal output type"),
-            OutputType::Slack => bail!("Output filename cannot be used with Slack output type"),
-            _ => {}
-        }
-    }
 
     let s3_client = Client::new(&config);
 
@@ -234,7 +242,7 @@ async fn main() -> Result<()> {
     spinner.update(spinners::Dots7, "Summarizing text...", None);
     let summarized_text = summarize::summarize_text(&config, &transcription, &mut spinner).await?;
 
-    match output_type {
+    match actual_output_type {
         OutputType::Word => {
             let filename = match &output_filename {
                 Some(f) => f,
