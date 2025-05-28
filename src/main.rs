@@ -38,6 +38,9 @@ struct Opt {
     )]
     output_type: OutputType,
 
+    #[clap(long, help = "Specify the output filename (only valid with text, word, or markdown output types)")]
+    output_filename: Option<String>,
+
     #[clap(short, long, default_value = "en-US")]
     language_code: String,
 
@@ -70,6 +73,7 @@ async fn main() -> Result<()> {
     let Opt {
         input_audio_file,
         output_type,
+        output_filename,
         language_code,
         delete_s3_object,
     } = Opt::parse();
@@ -184,8 +188,11 @@ async fn main() -> Result<()> {
 
     match output_type {
         OutputType::Word => {
-            let output_file_path_word = Path::new("summary.docx");
-            let file = File::create(output_file_path_word)
+            let filename = match &output_filename {
+                Some(f) => f,
+                None => "summary.docx",
+            };
+            let file = File::create(filename)
                 .map_err(|e| anyhow::anyhow!("Error creating file: {}", e))?;
 
             // Creating a new document and adding paragraphs
@@ -203,12 +210,15 @@ async fn main() -> Result<()> {
             spinner.success("Done!");
             println!(
                 "💾 Summary and transcription written to {}",
-                output_file_path_word.display()
+                filename
             );
         }
         OutputType::Text => {
-            let output_file_path_txt = Path::new("summary.txt");
-            let mut file = File::create(output_file_path_txt)
+            let filename = match &output_filename {
+                Some(f) => f,
+                None => "summary.txt",
+            };
+            let mut file = File::create(filename)
                 .map_err(|e| anyhow::anyhow!("Error creating file: {}", e))?;
 
             file.write_all(summarized_text.as_bytes())
@@ -221,18 +231,24 @@ async fn main() -> Result<()> {
             spinner.success("Done!");
             println!(
                 "💾 Summary and transcription written to {}",
-                output_file_path_txt.display()
+                filename
             );
         }
         OutputType::Terminal => {
+            if output_filename.is_some() {
+                bail!("Cannot specify output filename with Terminal output type");
+            }
             spinner.success("Done!");
             println!();
             println!("Summary:\n{}\n", summarized_text);
             println!("Transcription:\n{}\n", transcription);
         }
         OutputType::Markdown => {
-            let output_file_path_md = Path::new("summary.md");
-            let mut file = File::create(output_file_path_md)
+            let filename = match &output_filename {
+                Some(f) => f,
+                None => "summary.md",
+            };
+            let mut file = File::create(filename)
                 .map_err(|e| anyhow::anyhow!("Error creating file: {}", e))?;
 
             let summary_md = format!("# Summary\n\n{}", summarized_text);
@@ -246,10 +262,13 @@ async fn main() -> Result<()> {
             spinner.success("Done!");
             println!(
                 "💾 Summary and transcription written to {}",
-                output_file_path_md.display()
+                filename
             );
         }
         OutputType::Slack => {
+            if output_filename.is_some() {
+                bail!("Cannot specify output filename with Slack output type");
+            }
             let client = ReqwestClient::new();
 
             let slack_webhook_endpoint = settings
