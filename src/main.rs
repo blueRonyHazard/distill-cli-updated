@@ -36,7 +36,7 @@ struct Opt {
         default_value = "Terminal",
         ignore_case = true
     )]
-    output_type: OutputType,
+    output_type: Option<OutputType>,
 
     #[clap(long, help = "Specify the output filename (only valid with text, word, or markdown output types)")]
     output_filename: Option<String>,
@@ -57,6 +57,22 @@ enum OutputType {
     Slack,
 }
 
+impl OutputType {
+    fn from_filename(filename: &str) -> Option<Self> {
+        let extension = std::path::Path::new(filename)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|s| s.to_lowercase());
+        
+        match extension.as_deref() {
+            Some("md") => Some(OutputType::Markdown),
+            Some("txt") => Some(OutputType::Text),
+            Some("doc" | "docx") => Some(OutputType::Word),
+            _ => None
+        }
+    }
+}
+
 #[::tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -72,11 +88,43 @@ async fn main() -> Result<()> {
 
     let Opt {
         input_audio_file,
-        output_type,
+        mut output_type,
         output_filename,
         language_code,
         delete_s3_object,
     } = Opt::parse();
+
+    // Handle output type inference and validation
+    let output_type = match (&output_filename, output_type) {
+        (Some(filename), None) => {
+            // Try to infer from filename if type not explicitly specified
+            OutputType::from_filename(filename).unwrap_or_else(|| {
+                println!("Warning: Could not infer output type from filename '{}', defaulting to text", filename);
+                OutputType::Text
+            })
+        },
+        (Some(filename), Some(explicit_type)) => {
+            // If type explicitly specified, check against filename
+            if let Some(inferred_type) = OutputType::from_filename(filename) {
+                if explicit_type != inferred_type {
+                    println!("Warning: Output filename extension suggests {} output type, but {} was explicitly specified",
+                        inferred_type.to_string().to_lowercase(),
+                        explicit_type.to_string().to_lowercase());
+                }
+            }
+            explicit_type
+        },
+        (None, Some(t)) => t,
+        (None, None) => OutputType::Terminal,
+    };
+
+    if let Some(_) = output_filename {
+        match output_type {
+            OutputType::Terminal => bail!("Output filename cannot be used with terminal output type"),
+            OutputType::Slack => bail!("Output filename cannot be used with Slack output type"),
+            _ => {}
+        }
+    }
 
     let s3_client = Client::new(&config);
 
@@ -235,9 +283,6 @@ async fn main() -> Result<()> {
             );
         }
         OutputType::Terminal => {
-            if output_filename.is_some() {
-                bail!("Cannot specify output filename with Terminal output type");
-            }
             spinner.success("Done!");
             println!();
             println!("Summary:\n{}\n", summarized_text);
@@ -266,9 +311,6 @@ async fn main() -> Result<()> {
             );
         }
         OutputType::Slack => {
-            if output_filename.is_some() {
-                bail!("Cannot specify output filename with Slack output type");
-            }
             let client = ReqwestClient::new();
 
             let slack_webhook_endpoint = settings
