@@ -15,6 +15,7 @@ use docx_rs::{Docx, Paragraph, Run};
 use reqwest::Client as ReqwestClient;
 use serde_json::json;
 use spinoff::{spinners, Color, Spinner};
+use regex::Regex;
 
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
@@ -332,9 +333,13 @@ async fn main() -> Result<()> {
                 );
                 println!("Summary:\n{}\n", summarized_text);
             } else {
-                let content = format!("A summarization job just completed:\n\n{}", summarized_text);
+                let (summary, action_items, rest) = parse_summary_sections(&summarized_text);
+                let content = format!("A summarization job just completed:\n\n{}\n{}", input_audio_file, summarized_text);
                 let payload = json!({
-                    "content": content
+                    "Content": input_audio_file,
+                    "SummaryText": summary,
+                    "KeyActions": action_items,
+                    "Others": rest
                 });
                 match client
                     .post(slack_webhook_endpoint)
@@ -391,6 +396,46 @@ async fn load_config(region: Option<Region>) -> SdkConfig {
         );
 
     config.load().await
+}
+
+fn parse_summary_sections(summarized_text: &str) -> (String, String, String) {
+    // Initialize empty sections
+    let mut summary = String::new();
+    let mut action_items = String::new();
+    let mut rest = String::new();
+
+    // Split text by lines for processing
+    let lines: Vec<&str> = summarized_text.lines().collect();
+    let mut current_section = "";
+    
+    for line in lines {
+        // Check for section headers
+        if line.to_lowercase().contains("key points") || 
+           line.to_lowercase().contains("summary") {
+            current_section = "summary";
+            continue;
+        } else if line.to_lowercase().contains("action item") || 
+                  line.to_lowercase().contains("next step") {
+            current_section = "action";
+            continue;
+        } else if line.trim().is_empty() {
+            continue;
+        }
+
+        // Append content to appropriate section
+        match current_section {
+            "summary" => summary.push_str(&format!("{}\n", line)),
+            "action" => action_items.push_str(&format!("{}\n", line)),
+            _ => rest.push_str(&format!("{}\n", line)),
+        }
+    }
+
+    // Trim whitespace from all sections
+    (
+        summary.trim().to_string(),
+        action_items.trim().to_string(),
+        rest.trim().to_string()
+    )
 }
 
 async fn list_buckets(client: &Client) -> Result<Vec<String>> {
