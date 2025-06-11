@@ -15,7 +15,6 @@ use docx_rs::{Docx, Paragraph, Run};
 use reqwest::Client as ReqwestClient;
 use serde_json::json;
 use spinoff::{spinners, Color, Spinner};
-use regex::Regex;
 
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::Client;
@@ -334,7 +333,7 @@ async fn main() -> Result<()> {
                 println!("Summary:\n{}\n", summarized_text);
             } else {
                 let (summary, action_items, rest) = parse_summary_sections(&summarized_text);
-                let content = format!("A summarization job just completed:\n\n{}\n{}", input_audio_file, summarized_text);
+                let _content = format!("A summarization job just completed:\n\n{}\n{}", input_audio_file, summarized_text);
                 let payload = json!({
                     "Content": input_audio_file,
                     "SummaryText": summary,
